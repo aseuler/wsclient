@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tracing = "0.1.37"
+tracing = "0.1.35"
 url = { version = "2.3" }
 tokio-tungstenite = { version = "0.18.0" }
 futures-channel = { version = "0.3" }
