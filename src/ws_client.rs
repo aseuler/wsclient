@@ -1,22 +1,33 @@
 use futures_util::{future, pin_mut, StreamExt};
+use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{info, warn};
 
+use super::Handler;
+
+#[derive(Clone, Default)]
+struct ChatHandler {}
+impl Handler for ChatHandler {
+    fn process(&self, data: String) {
+        println!("{:?}", data);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WsClient {
-    pub url: url::Url,
-    pub tx: Option<futures_channel::mpsc::UnboundedSender<Message>>,
+    pub tx: Arc<Mutex<Option<futures_channel::mpsc::UnboundedSender<Message>>>>,
 }
 
 impl WsClient {
-    pub fn new(url: String) -> Self {
-        let url = url::Url::parse(&url).unwrap();
-        Self { url: url, tx: None }
+    pub fn new() -> Self {
+        Self {
+            tx: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn send(&self, data: String) {
-        if let Some(tx) = self.tx.clone() {
+        if let Some(tx) = self.tx.lock().unwrap().clone() {
             tx.unbounded_send(Message::Text(data)).unwrap();
         } else {
             warn!("tx is none, not valid");
@@ -24,35 +35,35 @@ impl WsClient {
     }
 
     pub fn send_ignore_error(&self, data: String) {
-        if let Some(tx) = self.tx.clone() {
+        if let Some(tx) = self.tx.lock().unwrap().clone() {
             let _ = tx.unbounded_send(Message::Text(data));
         } else {
             warn!("tx is none, not valid");
         }
     }
 
-    pub async fn start(&mut self, callback: fn(String)) -> &mut Self {
+    pub async fn start(&mut self, url: String, handler: Box<dyn Handler>) -> &mut Self {
+        let url = url::Url::parse(&url).unwrap();
+
         let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
-        self.tx = Some(stdin_tx);
+        self.tx = Arc::new(Mutex::new(Some(stdin_tx.clone())));
 
         let func = |url: url::Url,
                     stdin_rx: futures_channel::mpsc::UnboundedReceiver<Message>,
-                    callback: fn(String)| async move {
+                    handler: Box<dyn Handler>| async move {
             let (ws_stream, _resp) = connect_async(url).await.expect("Failed to connect");
             info!("websocket handshake has been successfully completed");
 
             let (write, read) = ws_stream.split();
             let stdin_to_ws = stdin_rx.map(Ok).forward(write);
-
             let ws_to_stdout = {
-                read.for_each(|message| async move {
+                read.for_each(|message| async {
                     match message {
                         Ok(message) => {
                             let data = message.into_data();
                             let data_string = String::from_utf8_lossy(&data).to_string();
                             if !data_string.eq("ping") {
-                                // println!("{:?}", data_string);
-                                callback(data_string);
+                                handler.process(data_string);
                             }
                         }
                         Err(e) => {
@@ -66,15 +77,14 @@ impl WsClient {
             future::select(stdin_to_ws, ws_to_stdout).await;
         };
 
-        tokio::spawn(func(self.url.clone(), stdin_rx, callback));
+        tokio::spawn(func(url, stdin_rx, handler));
         self
     }
 
-    pub async fn chat(&mut self) {
-        let callback = |data: String| {
-            println!("{:?}", data);
-        };
-        self.start(callback).await.send("init".to_string());
+    pub async fn chat(&mut self, url: String) {
+        self.start(url, Box::new(ChatHandler::default()))
+            .await
+            .send("init".to_string());
 
         let mut stdin = tokio::io::stdin();
         loop {
@@ -85,7 +95,7 @@ impl WsClient {
             };
             buf.truncate(n);
 
-            if let Some(tx) = self.tx.clone() {
+            if let Some(tx) = self.tx.lock().unwrap().clone() {
                 tx.unbounded_send(Message::binary(buf)).unwrap();
             }
         }
