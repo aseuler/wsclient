@@ -1,10 +1,9 @@
+use super::Handler;
 use futures_util::{future, pin_mut, StreamExt};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{info, warn};
-
-use super::Handler;
 
 #[derive(Clone, Default)]
 struct ChatHandler {}
