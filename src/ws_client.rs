@@ -1,4 +1,5 @@
 use super::Handler;
+// use futures_util::FutureExt;
 use futures_util::{future, pin_mut, StreamExt};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
@@ -16,18 +17,28 @@ impl Handler for ChatHandler {
 #[derive(Clone, Debug)]
 pub struct WsClient {
     pub tx: Arc<Mutex<Option<futures_channel::mpsc::UnboundedSender<Message>>>>,
+    pub runtime: Arc<Mutex<tokio::runtime::Runtime>>,
 }
 
 impl WsClient {
     pub fn new() -> Self {
         Self {
             tx: Arc::new(Mutex::new(None)),
+            runtime: Arc::new(Mutex::new(
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(4)
+                    .thread_name("wsclient")
+                    .enable_all()
+                    .build()
+                    .unwrap(),
+            )),
         }
     }
 
-    pub fn send(&self, data: String) {
+    pub fn send(&self, data: Vec<u8>) {
         if let Some(tx) = self.tx.lock().unwrap().clone() {
-            tx.unbounded_send(Message::Text(data)).unwrap();
+            // tx.unbounded_send(Message::Text(data)).unwrap();
+            tx.unbounded_send(Message::Binary(data)).unwrap();
         } else {
             warn!("tx is none, not valid");
         }
@@ -44,12 +55,14 @@ impl WsClient {
     pub async fn start(&mut self, url: String, handler: Box<dyn Handler>) -> &mut Self {
         let url = url::Url::parse(&url).unwrap();
 
+        info!("start: {}", url);
         let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
         self.tx = Arc::new(Mutex::new(Some(stdin_tx.clone())));
 
         let func = |url: url::Url,
                     stdin_rx: futures_channel::mpsc::UnboundedReceiver<Message>,
                     handler: Box<dyn Handler>| async move {
+            info!("ws thread");
             let (ws_stream, _resp) = connect_async(url).await.expect("Failed to connect");
             info!("websocket handshake has been successfully completed");
 
@@ -64,11 +77,11 @@ impl WsClient {
                             if !data_string.eq("ping") {
                                 handler.process(data_string);
                             }
-                        }
+                        },
                         Err(e) => {
                             println!("ws read error: {}", e);
                             std::process::exit(1);
-                        }
+                        },
                     }
                 })
             };
@@ -76,14 +89,18 @@ impl WsClient {
             future::select(stdin_to_ws, ws_to_stdout).await;
         };
 
-        tokio::spawn(func(url, stdin_rx, handler));
+        info!("tokio::spawn: {}", url);
+        // tokio::spawn(func(url, stdin_rx, handler));
+        self.runtime
+            .lock()
+            .unwrap()
+            .spawn(func(url, stdin_rx, handler));
+        info!("tokio::spawn finish");
         self
     }
 
     pub async fn chat(&mut self, url: String) {
-        self.start(url, Box::new(ChatHandler::default()))
-            .await
-            .send("init".to_string());
+        self.start(url, Box::new(ChatHandler::default())).await;
 
         let mut stdin = tokio::io::stdin();
         loop {
