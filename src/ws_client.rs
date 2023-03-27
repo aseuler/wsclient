@@ -38,7 +38,7 @@ impl WsClient {
     pub fn send(&self, data: Vec<u8>) {
         if let Some(tx) = self.tx.lock().unwrap().clone() {
             // tx.unbounded_send(Message::Text(data)).unwrap();
-            tx.unbounded_send(Message::Binary(data)).unwrap();
+            let _ = tx.unbounded_send(Message::Binary(data));
         } else {
             warn!("tx is none, not valid");
         }
@@ -55,17 +55,22 @@ impl WsClient {
     pub async fn start(&mut self, url: String, handler: Box<dyn Handler>) -> &mut Self {
         let url = url::Url::parse(&url).unwrap();
 
-        info!("start: {}", url);
+        // info!("start: {}", url);
         let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
         self.tx = Arc::new(Mutex::new(Some(stdin_tx.clone())));
 
         let func = |url: url::Url,
                     stdin_rx: futures_channel::mpsc::UnboundedReceiver<Message>,
                     handler: Box<dyn Handler>| async move {
-            info!("ws thread");
-            let (ws_stream, _resp) = connect_async(url).await.expect("Failed to connect");
-            info!("websocket handshake has been successfully completed");
+            // let (ws_stream, _resp) = connect_async(url).await.expect("Failed to connect");
+            let tmp_conn = connect_async(url).await;
+            if tmp_conn.is_err() {
+                println!("connect with error");
+                handler.process("connect_error".to_string());
+            }
+            let (ws_stream, _resp) = tmp_conn.unwrap();
 
+            info!("websocket handshake has been successfully completed");
             let (write, read) = ws_stream.split();
             let stdin_to_ws = stdin_rx.map(Ok).forward(write);
             let ws_to_stdout = {
@@ -77,11 +82,12 @@ impl WsClient {
                             if !data_string.eq("ping") {
                                 handler.process(data_string);
                             }
-                        },
+                        }
                         Err(e) => {
                             println!("ws read error: {}", e);
-                            std::process::exit(1);
-                        },
+                            handler.process("connect_error".to_string());
+                            // std::process::exit(1);
+                        }
                     }
                 })
             };
@@ -89,13 +95,13 @@ impl WsClient {
             future::select(stdin_to_ws, ws_to_stdout).await;
         };
 
-        info!("tokio::spawn: {}", url);
+        // info!("tokio::spawn: {}", url);
         // tokio::spawn(func(url, stdin_rx, handler));
         self.runtime
             .lock()
             .unwrap()
             .spawn(func(url, stdin_rx, handler));
-        info!("tokio::spawn finish");
+        // info!("tokio::spawn finish");
         self
     }
 
