@@ -4,7 +4,7 @@ use futures_util::{future, pin_mut, StreamExt};
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[derive(Clone, Default)]
 struct ChatHandler {}
@@ -66,6 +66,10 @@ impl WsClient {
             let tmp_conn = connect_async(url).await;
             if tmp_conn.is_err() {
                 println!("connect with error");
+                for (key, value) in std::env::vars() {
+                    info!("{key}: {value}");
+                }
+                error!("error: {}", tmp_conn.as_ref().err().unwrap());
                 handler.process("connect_error".to_string());
             }
             let (ws_stream, _resp) = tmp_conn.unwrap();
