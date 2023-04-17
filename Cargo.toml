@@ -2,12 +2,18 @@
 name = "wsclient"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "A websocket client using tokio-tungstenite for easy dev"
+repository = "https://github.com/aseuler/wsclient.git"
+authors = ["AsEuler <aseuler@outlook.com>"]
 publish = false
 
 [dependencies]
 tracing = "0.1.35"
 url = { version = "2.2.2" }
-tokio-tungstenite = { version = "0.18.0", features = ["rustls-tls-native-roots"]}
+tokio-tungstenite = { version = "0.18.0", features = [
+    "rustls-tls-native-roots",
+] }
 # tokio-tungstenite = { version = "0.18.0", features = ["rustls-tls-webpki-roots"]}
 futures-channel = { version = "0.3" }
 futures-util = { version = "0.3", default-features = false, features = [
